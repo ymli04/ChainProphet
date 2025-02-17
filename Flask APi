@@ -1,0 +1,203 @@
+from flask import Flask, jsonify, request
+import sqlite3
+import pandas as pd
+
+app = Flask(__name__)
+
+# Database connection
+DB_PATH = "bitcoin_data.db"
+
+def query_db(query, params=()):
+    conn = sqlite3.connect(DB_PATH)
+    df = pd.read_sql_query(query, conn, params=params)
+    conn.close()
+    return df
+
+@app.route('/')
+def home():
+    return jsonify({"message": "Welcome to Chain Prophet API"})
+
+# Fetch Bitcoin market data
+@app.route('/market_data', methods=['GET'])
+def get_market_data():
+    query = "SELECT * FROM btc_data ORDER BY Time DESC LIMIT 100"
+    data = query_db(query)
+    return data.to_json(orient="records")
+
+# Fetch AI prediction data
+@app.route('/prediction', methods=['GET'])
+def get_predictions():
+    query = "SELECT * FROM predictions ORDER BY Time DESC LIMIT 30"
+    data = query_db(query)
+    return data.to_json(orient="records")
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
+
+  import requests
+import sqlite3
+import time
+import pandas as pd
+
+# Binance API URL
+BINANCE_URL = "https://api.binance.com/api/v3/klines"
+SYMBOL = "BTCUSDT"
+INTERVAL = "1d"
+LIMIT = 1000
+
+# Database setup
+DB_PATH = "bitcoin_data.db"
+conn = sqlite3.connect(DB_PATH)
+cursor = conn.cursor()
+
+# Create table if it doesn't exist
+cursor.execute("""
+    CREATE TABLE IF NOT EXISTS btc_data (
+        Time TEXT PRIMARY KEY,
+        Open REAL,
+        High REAL,
+        Low REAL,
+        Close REAL,
+        Volume REAL
+    )
+""")
+conn.commit()
+
+def fetch_historical_data():
+    """ Incrementally fetch Bitcoin market data from Binance API and store it in the database. """
+    cursor.execute("SELECT MAX(Time) FROM btc_data")
+    last_date = cursor.fetchone()[0]
+
+    if last_date:
+        start_time = int(pd.Timestamp(last_date).timestamp() * 1000) + 86400000
+    else:
+        start_time = int(pd.Timestamp("2017-01-01").timestamp() * 1000)
+
+    end_time = int(pd.Timestamp.now().timestamp() * 1000)
+    current_time = start_time
+
+    while current_time < end_time:
+        params = {"symbol": SYMBOL, "interval": INTERVAL, "startTime": current_time, "limit": LIMIT}
+        response = requests.get(BINANCE_URL, params=params)
+        data = response.json()
+
+        if not data:
+            break
+
+        # Convert to DataFrame and store in database
+        df = pd.DataFrame(data, columns=["Time", "Open", "High", "Low", "Close", "Volume", "_", "_", "_", "_", "_", "_"])
+        df["Time"] = pd.to_datetime(df["Time"], unit="ms")
+        df = df[["Time", "Open", "High", "Low", "Close", "Volume"]].astype(float)
+        df.to_sql("btc_data", conn, if_exists="append", index=False)
+
+        # Update current_time and avoid API rate limit issues
+        current_time = int(data[-1][0]) + 1
+        time.sleep(0.5)  # 0.5秒间隔，避免 API 速率限制
+
+    print("数据爬取完成！")
+
+if __name__ == "__main__":
+    fetch_historical_data()
+
+  import sqlite3
+
+DB_PATH = "bitcoin_data.db"
+
+def create_tables():
+    """ 创建数据库表格 """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    # 创建比特币市场数据表
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS btc_data (
+            Time TEXT PRIMARY KEY,
+            Open REAL,
+            High REAL,
+            Low REAL,
+            Close REAL,
+            Volume REAL
+        )
+    """)
+
+    # 创建 AI 预测数据表
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS predictions (
+            Time TEXT PRIMARY KEY,
+            Predicted_Close REAL
+        )
+    """)
+
+    # 创建新闻数据表
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS news (
+            ID INTEGER PRIMARY KEY AUTOINCREMENT,
+            Date TEXT,
+            Source TEXT,
+            Event TEXT,
+            Impact REAL
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+    print("数据库初始化完成！")
+
+def query_latest_data():
+    """ 查询最新的市场数据 """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM btc_data ORDER BY Time DESC LIMIT 5")
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+if __name__ == "__main__":
+    create_tables()
+    print("最新市场数据：", query_latest_data())
+
+  import sqlite3
+import numpy as np
+import pandas as pd
+from sklearn.linear_model import LinearRegression
+
+DB_PATH = "bitcoin_data.db"
+
+def train_ai_model():
+    """ 训练 AI 预测模型，基于牌桌算法 """
+    conn = sqlite3.connect(DB_PATH)
+    query = "SELECT Time, Open, High, Low, Close FROM btc_data ORDER BY Time ASC"
+    df = pd.read_sql(query, conn)
+    conn.close()
+
+    # 预处理数据
+    df["Time"] = pd.to_datetime(df["Time"])
+    df["Target"] = df["Close"].shift(-30)  # 预测 30 天后的价格
+    df.dropna(inplace=True)
+
+    # 训练 AI 模型
+    X = df[["Open", "High", "Low", "Close"]].values
+    y = df["Target"].values
+    model = LinearRegression()
+    model.fit(X, y)
+
+    print("AI 训练完成！")
+
+    return model
+
+def predict_next_month(model):
+    """ 预测下个月的比特币价格 """
+    conn = sqlite3.connect(DB_PATH)
+    query = "SELECT Open, High, Low, Close FROM btc_data ORDER BY Time DESC LIMIT 30"
+    df = pd.read_sql(query, conn)
+    conn.close()
+
+    X_future = df[["Open", "High", "Low", "Close"]].values
+    future_predictions = model.predict(X_future)
+
+    return future_predictions
+
+if __name__ == "__main__":
+    model = train_ai_model()
+    predictions = predict_next_month(model)
+    print("未来 30 天预测价格：", predictions)
