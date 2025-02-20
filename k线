@@ -1,0 +1,28 @@
+from flask import Flask, render_template, jsonify
+import sqlite3
+import pandas as pd
+
+app = Flask(__name__)
+
+def get_ohlc_data():
+    """ 从数据库获取最新 500 条 K 线数据 """
+    conn = sqlite3.connect("btc_ohlc.db")
+    query = "SELECT * FROM btc_ohlc ORDER BY timestamp DESC LIMIT 500"
+    df = pd.read_sql(query, conn)
+    conn.close()
+    
+    # 转换时间戳
+    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+    
+    return df.to_dict(orient="records")
+
+@app.route('/')
+def index():
+    return render_template("index.html")
+
+@app.route('/ohlc')
+def ohlc():
+    return jsonify(get_ohlc_data())
+
+if __name__ == '__main__':
+    app.run(debug=True)
