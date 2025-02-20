@@ -1,0 +1,115 @@
+import time
+import sqlite3
+import requests
+import pandas as pd
+from datetime import datetime
+from binance.client import Client
+
+# Binance API Key（如果有更高速率需求，可以添加自己的 API Key）
+API_KEY = ""
+API_SECRET = ""
+
+# 连接 Binance API
+client = Client(API_KEY, API_SECRET)
+
+# 创建 SQLite 数据库
+DB_NAME = "btc_ohlc.db"
+
+def create_database():
+    """ 创建 SQLite 数据库 & K 线表格 """
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS btc_ohlc (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp INTEGER UNIQUE,
+            open REAL,
+            high REAL,
+            low REAL,
+            close REAL,
+            volume REAL
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def fetch_and_store_ohlc():
+    """ 从 Binance API 爬取比特币 K 线数据（2017年至今）并存入数据库 """
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    # 开始时间（2017年1月1日）
+    start_time = datetime.strptime("2017-01-01", "%Y-%m-%d")
+    start_str = str(int(start_time.timestamp() * 1000))  # 转换为毫秒
+
+    # 获取历史数据
+    print("正在爬取 BTC/USDT 历史 K 线数据...")
+    while True:
+        try:
+            klines = client.get_klines(
+                symbol="BTCUSDT",
+                interval=Client.KLINE_INTERVAL_1MINUTE,
+                startTime=start_str,
+                limit=1000  # Binance 单次最大返回 1000 根 K 线
+            )
+            
+            if not klines:
+                print("已获取所有数据，爬取完成！")
+                break
+            
+            for k in klines:
+                timestamp, open_, high, low, close, volume = int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5])
+                
+                # 插入数据库（如果时间戳已存在，则跳过）
+                cursor.execute("""
+                    INSERT OR IGNORE INTO btc_ohlc (timestamp, open, high, low, close, volume) 
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (timestamp, open_, high, low, close, volume))
+            
+            conn.commit()
+
+            # 取最后一条数据的时间戳，作为下次请求的起点
+            start_str = str(int(klines[-1][0]) + 1)
+
+            # 0.5 秒间隔，避免 API 限制
+            time.sleep(0.5)
+
+        except Exception as e:
+            print(f"❌ 发生错误: {e}")
+            time.sleep(10)  # 如果出现错误，暂停 10 秒后重试
+
+    conn.close()
+    print("✅ BTC/USDT 历史数据存储完成！")
+
+def fetch_latest_data():
+    """ 获取最新 K 线数据并实时更新数据库 """
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    
+    while True:
+        try:
+            # 获取最新的一根 K 线
+            klines = client.get_klines(symbol="BTCUSDT", interval=Client.KLINE_INTERVAL_1MINUTE, limit=1)
+            if klines:
+                k = klines[0]
+                timestamp, open_, high, low, close, volume = int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5])
+
+                # 更新数据库
+                cursor.execute("""
+                    INSERT OR REPLACE INTO btc_ohlc (timestamp, open, high, low, close, volume) 
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (timestamp, open_, high, low, close, volume))
+                conn.commit()
+                print(f"📊 最新数据更新: 时间={datetime.fromtimestamp(timestamp / 1000)}, 收盘价={close}")
+
+            time.sleep(60)  # 每分钟更新一次
+        except Exception as e:
+            print(f"❌ 获取最新数据时出错: {e}")
+            time.sleep(10)
+
+    conn.close()
+
+if __name__ == "__main__":
+    create_database()
+    fetch_and_store_ohlc()  # 爬取历史数据
+    fetch_latest_data()  # 开始实时更新数据
